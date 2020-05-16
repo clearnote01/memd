@@ -1,4 +1,5 @@
 use std::io::prelude::*;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::Instant;
 use std::hash::{Hash, Hasher};
@@ -11,6 +12,29 @@ use clap::clap_app;
 struct MemDB {
     data: HashMap<MemKey, MemVal>,
     _init_time: Instant
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+enum ReqMemMsg { // different type of tcp request type that can be made
+    StoreKeyVal(String, String),
+    FetchKey(String),
+}
+
+impl ReqMemMsg {
+    fn get_byte_arr(&self) -> Vec<u8> {
+        // figuring the below part took forever
+        // what i learned was slice can be made from vector also, same as array
+        // array cannot be dynamically allocated
+          
+        let send_data = bincode::serialize(&self).unwrap();
+
+        let size_send_data: u16 = send_data.len() as u16;
+        let size_arr = size_send_data.to_be_bytes(); // converting to bigendian order arr
+
+        let byte_arr: Vec<u8> = size_arr.iter().chain(send_data.iter()).map(|x| *x).collect();
+        
+        byte_arr
+    }
 }
 
 impl MemDB {
@@ -79,7 +103,8 @@ impl MemKey {
 
 
 struct MemDaemon {
-    listener: TcpListener
+    listener: TcpListener,
+    mem: MemDB
 }
 
 impl MemDaemon {
@@ -88,26 +113,54 @@ impl MemDaemon {
         println!("Starting daemon at {}", addr);
         let listener = TcpListener::bind(addr).expect("Failed to start daemon");
         MemDaemon {
-            listener
+            listener,
+            mem: MemDB::new()
         }
     }
     
-    fn run(&self) {
+    fn run(&mut self) {
         println!("Starting the MemDB server");
         for stream in self.listener.incoming() {
             let mut stream = stream.unwrap();
             let mut buffer = [0; 512];
             stream.read(&mut buffer).unwrap();
-            let buffer: String = String::from_utf8_lossy(&buffer).to_string();
-            self.handle_stream(&buffer);
-            let msg = "recvd loud and clear";
-            stream.write(msg.as_bytes());
+
+            // first two digits store the length of the objects
+            let len: u16 = ((buffer[0] as u16) << 8) | (buffer[1] as u16);
+            // taking the slice which contains encoded object
+            let byte_obj = &buffer[2..(2 + len as usize)];
+            
+            let resp: String;
+            match bincode::deserialize(&byte_obj) {
+                Ok(decoded) => {
+                    match decoded {
+                        ReqMemMsg::StoreKeyVal(key, val) => {
+                            self.mem.store(key.to_string(), val.to_string());
+                            resp = "Key:Val saved in mem".to_string();
+                        },
+                        ReqMemMsg::FetchKey(key) => {
+                            let val = self.mem.fetch(key.to_string());
+                            match val {
+                                Some(key_value) => resp = key_value.to_string(),
+                                None => resp = "key not found".to_string()
+                            }
+                        }
+                    };
+                    println!("Mem now {:?}", self.mem);
+                },
+                _ => {
+                    resp = "not of acceptable request message format".to_string();
+                }
+            }
+            stream.write(resp.as_bytes()).unwrap();
         }
     }
 
-    fn handle_stream(&self, buffer: &str) {
+    fn _handle_utf8(&self, buffer: &[u8]) {
+        let buffer: String = String::from_utf8_lossy(&buffer).to_string();
         println!("Recvd is  {:?}", buffer);
     }
+
 }
 
 struct MemClient {
@@ -121,8 +174,8 @@ impl MemClient {
         }
     }
 
-    pub fn send(&mut self, msg: String) {
-        let msg: &[u8] = msg.as_bytes();
+    pub fn send(&mut self, msg: &[u8]) {
+        // let msg: &[u8] = msg.as_bytes();
         let mut buffer = [0; 512];
         self.stream.write(msg).unwrap();
         self.stream.read(&mut buffer).unwrap();
@@ -152,13 +205,11 @@ fn main() {
         )
     ).get_matches();
 
-
-    let mut mem = MemDB::new();
     let host = matches.value_of("host").unwrap();
     let port = matches.value_of("port").unwrap();
 
     if let Some(_) = matches.subcommand_matches("daemon") {
-        let mem_daemon = MemDaemon::new(host.to_string(), port.to_string());
+        let mut mem_daemon = MemDaemon::new(host.to_string(), port.to_string());
         mem_daemon.run();
     }
 
@@ -167,17 +218,18 @@ fn main() {
 
     if let Some(matches) = matches.subcommand_matches("fetch") {
         let key = matches.value_of("key").unwrap();
-        let val = mem.fetch(key.to_string());
-        println!("value is {:?}", val);
-        mem_client.send(key.to_string());
+
+        let msg = ReqMemMsg::FetchKey(key.to_string());
+        let msg_byte_arr = msg.get_byte_arr();
+        mem_client.send(&msg_byte_arr[..]);
     }
 
     if let Some(matches) = matches.subcommand_matches("store") {
         let key = matches.value_of("key").unwrap();
         let val = matches.value_of("val").unwrap();
-        mem.store(key.to_string(), val.to_string());
-        mem_client.send(format!("key={}:value={}", key, val));
-    }
 
-    println!("{:?}", mem);
+        let msg = ReqMemMsg::StoreKeyVal(key.to_string(),  val.to_string());
+        let msg_byte_arr = msg.get_byte_arr();
+        mem_client.send(&msg_byte_arr[..]);
+    }
 }
