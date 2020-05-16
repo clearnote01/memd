@@ -100,7 +100,8 @@ impl MemDaemon {
             stream.read(&mut buffer).unwrap();
             let buffer: String = String::from_utf8_lossy(&buffer).to_string();
             self.handle_stream(&buffer);
-            stream.write(&[1]);
+            let msg = "recvd loud and clear";
+            stream.write(msg.as_bytes());
         }
     }
 
@@ -121,8 +122,9 @@ impl MemClient {
     }
 
     pub fn send(&mut self, msg: String) {
+        let msg: &[u8] = msg.as_bytes();
         let mut buffer = [0; 512];
-        self.stream.write(&[1]);
+        self.stream.write(msg).unwrap();
         self.stream.read(&mut buffer).unwrap();
         let buffer = String::from_utf8_lossy(&buffer).to_string();
         println!("Recv from server {:?}", buffer);
@@ -174,7 +176,7 @@ fn main() {
         let key = matches.value_of("key").unwrap();
         let val = matches.value_of("val").unwrap();
         mem.store(key.to_string(), val.to_string());
-        mem_client.send(key.to_string());
+        mem_client.send(format!("key={}:value={}", key, val));
     }
 
     println!("{:?}", mem);
