@@ -130,9 +130,7 @@ impl MemClient {
 }
 
 fn main() {
-    let matches = clap_app!(myapp =>
-        (version: "1.0.0")
-        (author: "clearnote01")
+    let matches = clap_app!("" =>
         (about: "CLI to start memd datastore or fetch/store from it")
         (@arg host: -h --host +takes_value 
             default_value("127.0.0.1") "hostname for the tcp server")
