@@ -50,8 +50,8 @@ USAGE:
     memd store <key> <val>
 
 ARGS:
-    <key>    key name
-    <val>    value name
+    <key>    
+    <val>   
 
 FLAGS:
     -h, --help       Prints help information

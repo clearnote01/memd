@@ -142,8 +142,8 @@ fn main() {
         )
         (@subcommand store =>
                         (about: "store key:val pair")
-                        (@arg key: +required "key name")
-                        (@arg val: +required "value name")
+                        (@arg key: +required "key")
+                        (@arg val: +required "value")
         )
         (@subcommand daemon =>
                         (about: "Run as the daemon")
