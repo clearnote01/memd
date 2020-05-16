@@ -32,14 +32,15 @@ __Fetch key value__
 fetch val for a key
 
 USAGE:
-    memd fetch --key <key>
+    memd fetch <key>
+
+ARGS:
+    <key>    Key that was previously stored
 
 FLAGS:
     -h, --help       Prints help information
     -V, --version    Prints version information
 
-OPTIONS:
-    -k, --key <key>    Key that was previously stored
 ```
   
 __Store key value__
