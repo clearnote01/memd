@@ -138,7 +138,7 @@ fn main() {
             default_value("7000") "port number for the tcp server")
         (@subcommand fetch =>
                         (about: "fetch val for a key")
-                        (@arg key: -k --key +required +takes_value "Key that was previously stored")
+                        (@arg key: +required +takes_value "Key that was previously stored")
         )
         (@subcommand store =>
                         (about: "store key:val pair")
