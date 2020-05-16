@@ -24,7 +24,7 @@ SUBCOMMANDS:
 
 __Start daemon__
 ```
-memd -h 127.0.0.1 -p 7000
+memd -h 127.0.0.1 -p 7000 daemon
 ```
   
 __Fetch key value__
