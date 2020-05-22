@@ -1,43 +1,21 @@
-use std::io::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Instant;
 use std::hash::{Hash, Hasher};
-use std::net::TcpStream;
+use std::io::prelude::*;
 use std::net::TcpListener;
+use std::net::TcpStream;
+use std::time::Instant;
 
 use clap::clap_app;
-
-trait MemMsgTrait {
-    fn encode(&self) -> Vec<u8>;
-    fn decode(buffer: &[u8]) -> Self;
-}
-
-trait ByteArrSer {
-    fn enc_byte_arr(buffer: &Vec<u8>) -> Vec<u8> {
-        let buffer_size: u16 = buffer.len() as u16;
-        let size_arr = buffer_size.to_be_bytes(); // converting to bigendian order arr
-        let byte_arr: Vec<u8> = size_arr.iter().chain(buffer.iter()).map(|x| *x).collect();
-        byte_arr
-    }
-
-    fn dec_byte_arr(buffer: &[u8]) -> Vec<u8> {
-        // first two digits store the length of the objects
-        let len: u16 = ((buffer[0] as u16) << 8) | (buffer[1] as u16);
-        // taking the slice which contains encoded object
-        let byte_obj = &buffer[2..(2 + len as usize)];
-        byte_obj.to_vec()
-    }
-}
 
 #[derive(Debug)]
 struct MemDB {
     data: HashMap<MemKey, MemVal>,
-    _init_time: Instant
+    _init_time: Instant,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-enum ResMemMsg { 
+enum ResMemMsg {
     KeyNotFound(String),
     KeySaved(String),
     KeyValue(String),
@@ -50,46 +28,39 @@ enum ReqMemMsg {
     FetchKey(String),
 }
 
-impl ByteArrSer for ReqMemMsg {}
-impl ByteArrSer for ResMemMsg {}
+trait SerDes<'a> {}
 
-impl ReqMemMsg {
-    // find some way to remove duplication of encode/decode
+trait MemMsgTrait<'a>: Serialize + Deserialize<'a> {
     fn encode(&self) -> Vec<u8> {
         let send_data = bincode::serialize(&self).unwrap();
-        Self::enc_byte_arr(&send_data)
+        let buffer_size: u16 = send_data.len() as u16;
+        let size_arr = buffer_size.to_be_bytes();
+        let byte_arr: Vec<u8> = size_arr
+            .iter()
+            .chain(send_data.iter())
+            .map(|x| *x)
+            .collect();
+        byte_arr
     }
 
-    fn decode(buffer: &[u8]) -> Option<Self> {
-        // convert this to result type
-        // the client should still get an option
-        // actually i have changed my mind i think
-        // it should be a result wrapping an option
-        // key not found is not error which decode or network 
-        // failure is
-        let byte_obj = Self::dec_byte_arr(&buffer);
-        let des: ReqMemMsg = bincode::deserialize(&byte_obj).unwrap();
+    fn decode(buffer: &'a Vec<u8>) -> Option<Self> {
+        // first two digits store the length of the objects
+        let len: u16 = ((buffer[0] as u16) << 8) | (buffer[1] as u16);
+        // taking the slice which contains encoded object
+        let byte_obj = &buffer[2..(2 + len as usize)];
+        let des: Self = bincode::deserialize(&byte_obj).unwrap();
         Some(des)
     }
 }
 
-impl ResMemMsg {
-    fn encode(&self) -> Vec<u8> {
-        let send_data = bincode::serialize(&self).unwrap();
-        Self::enc_byte_arr(&send_data)
-    }
-    fn decode(buffer: &[u8]) -> Option<Self> {
-        let byte_obj = Self::dec_byte_arr(&buffer);
-        let des: ResMemMsg = bincode::deserialize(&byte_obj).unwrap();
-        Some(des)
-    }
-}
+impl MemMsgTrait<'_> for ReqMemMsg {}
+impl MemMsgTrait<'_> for ResMemMsg {}
 
 impl MemDB {
     fn new() -> MemDB {
         MemDB {
             data: HashMap::<MemKey, MemVal>::new(),
-            _init_time: Instant::now()
+            _init_time: Instant::now(),
         }
     }
     fn store(&mut self, key: String, val: String) {
@@ -112,7 +83,7 @@ struct MemVal {
 }
 
 impl MemVal {
-    pub fn new (value: String) -> MemVal {
+    pub fn new(value: String) -> MemVal {
         MemVal { value }
     }
 }
@@ -121,7 +92,7 @@ impl MemVal {
 struct MemKey {
     value: String,
     _created: Instant,
-    _last_modified: Instant
+    _last_modified: Instant,
 }
 
 impl PartialEq for MemKey {
@@ -130,7 +101,7 @@ impl PartialEq for MemKey {
     }
 }
 
-impl Eq for MemKey {} 
+impl Eq for MemKey {}
 
 impl Hash for MemKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -139,19 +110,18 @@ impl Hash for MemKey {
 }
 
 impl MemKey {
-    pub fn new (value: String) -> MemKey {
+    pub fn new(value: String) -> MemKey {
         MemKey {
             value: value,
             _created: Instant::now(),
-            _last_modified: Instant::now()
+            _last_modified: Instant::now(),
         }
     }
 }
 
-
 struct MemDaemon {
     listener: TcpListener,
-    mem: MemDB
+    mem: MemDB,
 }
 
 impl MemDaemon {
@@ -161,59 +131,55 @@ impl MemDaemon {
         let listener = TcpListener::bind(addr).expect("Failed to start daemon");
         MemDaemon {
             listener,
-            mem: MemDB::new()
+            mem: MemDB::new(),
         }
     }
-    
+
     fn run(&mut self) {
         println!("Starting the MemDB server");
         for stream in self.listener.incoming() {
             let mut stream = stream.unwrap();
             let mut buffer = [0; 512];
             stream.read(&mut buffer).unwrap();
-            let dec = ReqMemMsg::decode(&buffer[..]);
+            let dec = ReqMemMsg::decode(&buffer.to_vec());
             let resp: ResMemMsg = match dec {
                 None => {
                     ResMemMsg::FailToDes("not of acceptable request message format".to_string())
                 }
-                Some(decoded) => {
-                    match decoded {
-                        ReqMemMsg::StoreKeyVal(key, val) => {
-                            self.mem.store(key.to_string(), val.to_string());
-                            ResMemMsg::KeySaved("Key:Val saved in mem".to_string())
-                        },
-                        ReqMemMsg::FetchKey(key) => {
-                            let val = self.mem.fetch(key.to_string());
-                            match val {
-                                Some(key_value) => ResMemMsg::KeyValue(key_value.to_string()),
-                                None => ResMemMsg::KeyNotFound("key not found".to_string())
-                            }
+                Some(decoded) => match decoded {
+                    ReqMemMsg::StoreKeyVal(key, val) => {
+                        self.mem.store(key.to_string(), val.to_string());
+                        ResMemMsg::KeySaved("Key:Val saved in mem".to_string())
+                    }
+                    ReqMemMsg::FetchKey(key) => {
+                        let val = self.mem.fetch(key.to_string());
+                        match val {
+                            Some(key_value) => ResMemMsg::KeyValue(key_value.to_string()),
+                            None => ResMemMsg::KeyNotFound("key not found".to_string()),
                         }
                     }
-                    
-                }
+                },
             };
             stream.write(&resp.encode()).unwrap();
             println!("Current store {:?}", self.mem);
         }
     }
-     
 
     fn _handle_utf8(&self, buffer: &[u8]) {
         let buffer: String = String::from_utf8_lossy(&buffer).to_string();
         println!("Recvd is  {:?}", buffer);
     }
-
 }
 
 struct MemClient {
-    stream: TcpStream
+    stream: TcpStream,
 }
 
 impl MemClient {
     pub fn connect(host: String, port: String) -> MemClient {
         MemClient {
-            stream: TcpStream::connect(format!("{}:{}", host, port)).expect("Failed to connec to the server") 
+            stream: TcpStream::connect(format!("{}:{}", host, port))
+                .expect("Failed to connec to the server"),
         }
     }
 
@@ -224,12 +190,11 @@ impl MemClient {
     fn recv(&mut self) -> Option<ResMemMsg> {
         let mut buffer = [0; 512];
         self.stream.read(&mut buffer).unwrap();
-        let buffer = buffer.to_vec();
-        let decoded = ResMemMsg::decode(&buffer);
+        let decoded = ResMemMsg::decode(&buffer.to_vec());
         decoded
     }
 
-    pub fn fetch (&mut self, key: &str) -> String {
+    pub fn fetch(&mut self, key: &str) -> String {
         let msg = ReqMemMsg::FetchKey(key.to_string());
         let msg_byte_arr = msg.encode();
         self.send(&msg_byte_arr[..]);
@@ -237,34 +202,33 @@ impl MemClient {
             return match resp {
                 ResMemMsg::KeyNotFound(msg) => msg,
                 ResMemMsg::KeyValue(val) => val,
-                _ => "some problem".to_string()
+                _ => "some problem".to_string(),
             };
         };
         "no idea; but something bad happened".to_string()
     }
 
-    pub fn store (&mut self, key: &str, val: &str) -> String {
-        let msg = ReqMemMsg::StoreKeyVal(key.to_string(),  val.to_string());
+    pub fn store(&mut self, key: &str, val: &str) -> String {
+        let msg = ReqMemMsg::StoreKeyVal(key.to_string(), val.to_string());
         let msg_byte_arr = msg.encode();
         self.send(&msg_byte_arr[..]);
         if let Some(resp) = self.recv() {
             println!("resp of store is {:?}", resp);
             return match resp {
                 ResMemMsg::KeySaved(msg) => msg,
-                _ => "some problem".to_string()
+                _ => "some problem".to_string(),
             };
         };
         "no idea; but something bad happened".to_string()
     }
 }
 
-
 fn main() {
     let matches = clap_app!("" =>
         (about: "CLI to start memd datastore or fetch/store from it")
-        (@arg host: -h --host +takes_value 
+        (@arg host: -h --host +takes_value
             default_value("127.0.0.1") "hostname for the tcp server")
-        (@arg port: -p --port +takes_value 
+        (@arg port: -p --port +takes_value
             default_value("7000") "port number for the tcp server")
         (@subcommand fetch =>
                         (about: "fetch val for a key")
@@ -278,7 +242,8 @@ fn main() {
         (@subcommand daemon =>
                         (about: "Run as the daemon")
         )
-    ).get_matches();
+    )
+    .get_matches();
 
     let host = matches.value_of("host").unwrap();
     let port = matches.value_of("port").unwrap();
@@ -289,7 +254,6 @@ fn main() {
     }
 
     let mut mem_client = MemClient::connect(host.to_string(), port.to_string());
-    
 
     if let Some(matches) = matches.subcommand_matches("fetch") {
         let key = matches.value_of("key").unwrap();
